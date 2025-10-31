@@ -1,20 +1,42 @@
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RadioStationScheduler.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services
+// =======================
+// Services
+// =======================
+
+// Configure CORS for React frontend
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowReactApp", policy =>
+    {
+        policy.WithOrigins("http://localhost:5173", "http://localhost:5174")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials(); // optional if using cookies/auth later
+    });
+});
+
+// Swagger & API exploration
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Configure database connection (SQLite example)
+// Database
 builder.Services.AddDbContext<RadioStationContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 var app = builder.Build();
 
-// Configure middleware
+// =======================
+// Middleware
+// =======================
+
+// ✅ CORS must come BEFORE Swagger & HTTPS redirection
+app.UseCors("AllowReactApp");
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -23,15 +45,19 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-// ================== ENDPOINTS ==================
+// =======================
+// Endpoints
+// =======================
 
 // Get today's schedule
 app.MapGet("/schedule/today", async (RadioStationContext db) =>
 {
     var today = DateTime.Today;
-    return await db.ScheduledEvents
+    var results = await db.ScheduledEvents
         .Where(e => e.StartTime.Date == today)
         .ToListAsync();
+
+    return Results.Ok(results);
 });
 
 // Get next 7 days
@@ -39,9 +65,11 @@ app.MapGet("/schedule/next7days", async (RadioStationContext db) =>
 {
     var today = DateTime.Today;
     var next7 = today.AddDays(6);
-    return await db.ScheduledEvents
+    var results = await db.ScheduledEvents
         .Where(e => e.StartTime.Date >= today && e.StartTime.Date <= next7)
         .ToListAsync();
+
+    return Results.Ok(results);
 });
 
 // Get event by ID
@@ -134,4 +162,9 @@ app.MapDelete("/schedule/{id}", async ([FromRoute] int id, RadioStationContext d
     return Results.NoContent();
 });
 
+// =======================
+// Run app
+// =======================
 app.Run();
+
+
