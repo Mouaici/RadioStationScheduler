@@ -8,19 +8,19 @@ var builder = WebApplication.CreateBuilder(args);
 // Services
 // =======================
 
-// Configure CORS for React frontend
+// Enable CORS for React frontend
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowReactApp", policy =>
+    options.AddDefaultPolicy(policy =>
     {
-        policy.WithOrigins("http://localhost:5173", "http://localhost:5174")
+        policy.AllowAnyOrigin()
               .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials(); // optional if using cookies/auth later
+              .AllowAnyMethod();
     });
 });
 
-// Swagger & API exploration
+
+// Swagger
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -34,7 +34,7 @@ var app = builder.Build();
 // Middleware
 // =======================
 
-// ✅ CORS must come BEFORE Swagger & HTTPS redirection
+// CORS MUST be first
 app.UseCors("AllowReactApp");
 
 if (app.Environment.IsDevelopment())
@@ -43,7 +43,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+// Remove HTTPS redirect because React runs on HTTP
+// app.UseHttpsRedirection();
 
 // =======================
 // Endpoints
@@ -53,6 +54,7 @@ app.UseHttpsRedirection();
 app.MapGet("/schedule/today", async (RadioStationContext db) =>
 {
     var today = DateTime.Today;
+
     var results = await db.ScheduledEvents
         .Where(e => e.StartTime.Date == today)
         .ToListAsync();
@@ -64,9 +66,10 @@ app.MapGet("/schedule/today", async (RadioStationContext db) =>
 app.MapGet("/schedule/next7days", async (RadioStationContext db) =>
 {
     var today = DateTime.Today;
-    var next7 = today.AddDays(6);
+    var next = today.AddDays(6);
+
     var results = await db.ScheduledEvents
-        .Where(e => e.StartTime.Date >= today && e.StartTime.Date <= next7)
+        .Where(e => e.StartTime.Date >= today && e.StartTime.Date <= next)
         .ToListAsync();
 
     return Results.Ok(results);
@@ -87,66 +90,69 @@ app.MapPost("/schedule", async (ScheduledEvent newEvent, RadioStationContext db)
 
     db.ScheduledEvents.Add(newEvent);
     await db.SaveChangesAsync();
+
     return Results.Created($"/schedule/{newEvent.Id}", newEvent);
 });
 
-// Reschedule event
-app.MapPut("/schedule/{id}/reschedule", async ([FromRoute] int id, RescheduleRequest request, RadioStationContext db) =>
+// Update event time
+app.MapPut("/schedule/{id}/reschedule", async ([FromRoute] int id, RescheduleRequest req, RadioStationContext db) =>
 {
     var ev = await db.ScheduledEvents.FindAsync(id);
     if (ev is null) return Results.NotFound();
 
-    ev.StartTime = request.NewStartTime;
-    ev.EndTime = request.NewEndTime;
-    await db.SaveChangesAsync();
+    ev.StartTime = req.NewStartTime;
+    ev.EndTime = req.NewEndTime;
 
+    await db.SaveChangesAsync();
     return Results.Ok(ev);
 });
 
 // Add host
-app.MapPut("/schedule/{id}/addHost", async ([FromRoute] int id, HostRequest request, RadioStationContext db) =>
+app.MapPut("/schedule/{id}/addHost", async ([FromRoute] int id, HostRequest req, RadioStationContext db) =>
 {
     var ev = await db.ScheduledEvents.FindAsync(id);
     if (ev is null) return Results.NotFound();
 
-    if (!ev.Hosts.Contains(request.Host))
-        ev.Hosts.Add(request.Host);
+    if (!ev.Hosts.Contains(req.Host))
+        ev.Hosts.Add(req.Host);
 
     await db.SaveChangesAsync();
     return Results.Ok(ev);
 });
 
 // Remove host
-app.MapPut("/schedule/{id}/removeHost", async ([FromRoute] int id, HostRequest request, RadioStationContext db) =>
+app.MapPut("/schedule/{id}/removeHost", async ([FromRoute] int id, HostRequest req, RadioStationContext db) =>
 {
     var ev = await db.ScheduledEvents.FindAsync(id);
     if (ev is null) return Results.NotFound();
 
-    ev.Hosts.Remove(request.Host);
+    ev.Hosts.Remove(req.Host);
+
     await db.SaveChangesAsync();
     return Results.Ok(ev);
 });
 
 // Add guest
-app.MapPut("/schedule/{id}/addGuest", async ([FromRoute] int id, GuestRequest request, RadioStationContext db) =>
+app.MapPut("/schedule/{id}/addGuest", async ([FromRoute] int id, GuestRequest req, RadioStationContext db) =>
 {
     var ev = await db.ScheduledEvents.FindAsync(id);
     if (ev is null) return Results.NotFound();
 
-    if (!ev.Guests.Contains(request.Guest))
-        ev.Guests.Add(request.Guest);
+    if (!ev.Guests.Contains(req.Guest))
+        ev.Guests.Add(req.Guest);
 
     await db.SaveChangesAsync();
     return Results.Ok(ev);
 });
 
 // Remove guest
-app.MapPut("/schedule/{id}/removeGuest", async ([FromRoute] int id, GuestRequest request, RadioStationContext db) =>
+app.MapPut("/schedule/{id}/removeGuest", async ([FromRoute] int id, GuestRequest req, RadioStationContext db) =>
 {
     var ev = await db.ScheduledEvents.FindAsync(id);
     if (ev is null) return Results.NotFound();
 
-    ev.Guests.Remove(request.Guest);
+    ev.Guests.Remove(req.Guest);
+
     await db.SaveChangesAsync();
     return Results.Ok(ev);
 });
@@ -159,8 +165,25 @@ app.MapDelete("/schedule/{id}", async ([FromRoute] int id, RadioStationContext d
 
     db.ScheduledEvents.Remove(ev);
     await db.SaveChangesAsync();
+
     return Results.NoContent();
 });
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<RadioStationContext>();
+    if (!db.ScheduledEvents.Any())
+    {
+        db.ScheduledEvents.Add(new ScheduledEvent
+        {
+            Title = "Morning Mix",
+            StartTime = DateTime.Today.AddHours(10),
+            EndTime = DateTime.Today.AddHours(11),
+            Hosts = new List<string> { "DJ Test" },
+            Guests = new List<string> { "Guest A" }
+        });
+        db.SaveChanges();
+    }
+}
 
 // =======================
 // Run app
